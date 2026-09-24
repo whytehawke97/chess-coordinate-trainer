@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="theme-color" content="#111827">
+<title>Chess Coordinate Trainer</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin:0; min-height:100vh; background:#111827; color:#f9fafb;
+    font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+    display:flex; justify-content:center;
+  }
+  main { width:min(100%,520px); padding:18px 16px 28px; }
+  h1 { font-size:24px; margin:4px 0 16px; text-align:center; }
+  .panel { background:#1f2937; border-radius:18px; padding:16px; box-shadow:0 8px 30px #0004; }
+  .controls { display:grid; gap:12px; }
+  label { font-size:14px; color:#cbd5e1; }
+  select, button {
+    width:100%; min-height:50px; border:0; border-radius:12px; font-size:17px;
+    font-weight:700; padding:0 14px;
+  }
+  select { background:#374151; color:white; }
+  button { background:#22c55e; color:#052e16; }
+  button:active { transform:scale(.98); }
+  button.secondary { background:#374151; color:#f9fafb; }
+  #board {
+    width:min(92vw,460px); aspect-ratio:1; margin:18px auto;
+    display:grid; grid-template-columns:repeat(8,1fr); border-radius:8px; overflow:hidden;
+    box-shadow:0 10px 35px #0006;
+  }
+  .sq { position:relative; display:flex; align-items:center; justify-content:center; font-size:12px; }
+  .light { background:#f0d9b5; } .dark { background:#b58863; }
+  .highlight { outline:5px solid #facc15; outline-offset:-5px; }
+  .rank, .file { position:absolute; font-weight:800; opacity:.75; font-size:11px; }
+  .rank { top:3px; left:4px; } .file { bottom:3px; right:4px; }
+  .dark .rank,.dark .file { color:#fff; } .light .rank,.light .file { color:#374151; }
+  .status { text-align:center; min-height:28px; font-weight:700; margin:4px 0 10px; }
+  .target { text-align:center; color:#facc15; font-size:20px; font-weight:800; min-height:30px; }
+  .stats { display:flex; justify-content:space-between; color:#cbd5e1; font-size:14px; margin-top:10px; }
+  .mic { margin-top:12px; background:#60a5fa; color:#172554; }
+  .mic.listening { background:#f87171; color:#450a0a; animation:pulse 1s infinite; }
+  .hint { color:#94a3b8; text-align:center; font-size:13px; line-height:1.4; margin-top:12px; }
+  @keyframes pulse { 50% { opacity:.55; } }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>♟ Chess Coordinate Trainer</h1>
+  <div class="panel">
+    <div class="controls">
+      <div>
+        <label for="side">Board orientation</label>
+        <select id="side">
+          <option value="white">Play as White</option>
+          <option value="black">Play as Black</option>
+        </select>
+      </div>
+      <button id="start">Start Training</button>
+    </div>
+
+    <div id="board" aria-label="Chessboard"></div>
+
+    <div id="target" class="target">Press Start Training</div>
+    <div id="status" class="status">A highlighted square will appear here.</div>
+
+    <button id="mic" class="mic hidden">🎙️ Say the square</button>
+    <div class="stats">
+      <span>Correct: <b id="correct">0</b></span>
+      <span>Attempts: <b id="attempts">0</b></span>
+      <span>Accuracy: <b id="accuracy">0%</b></span>
+    </div>
+
+    <p class="hint">
+      Example: for e4, say “e four” or “E4”. Chrome will request microphone permission the first time you use voice input.
+      For microphone access, this page must be served from HTTPS (or localhost).
+    </p>
+  </div>
+</main>
+
+<script>
+const files = ["a","b","c","d","e","f","g","h"];
+const ranks = ["1","2","3","4","5","6","7","8"];
+const board = document.getElementById("board");
+const side = document.getElementById("side");
+const startBtn = document.getElementById("start");
+const micBtn = document.getElementById("mic");
+const targetEl = document.getElementById("target");
+const statusEl = document.getElementById("status");
+const correctEl = document.getElementById("correct");
+const attemptsEl = document.getElementById("attempts");
+const accuracyEl = document.getElementById("accuracy");
+
+let target = null, running = false, correct = 0, attempts = 0, recognition = null;
+
+function buildBoard() {
+  board.innerHTML = "";
+  const isWhite = side.value === "white";
+  const fs = isWhite ? files : [...files].reverse();
+  const rs = isWhite ? [...ranks].reverse() : ranks;
+  for (const r of rs) {
+    for (const f of fs) {
+      const sq = document.createElement("div");
+      sq.className = `sq ${((files.indexOf(f)+Number(r)) % 2 === 0) ? "dark":"light"}`;
+      sq.dataset.square = f+r;
+      if (f === fs[0]) {
+        const rank = document.createElement("span"); rank.className="rank"; rank.textContent=r; sq.append(rank);
+      }
+      if (r === rs[rs.length-1]) {
+        const file = document.createElement("span"); file.className="file"; file.textContent=f; sq.append(file);
+      }
+      board.append(sq);
+    }
+  }
+}
+function highlight(s) {
+  document.querySelectorAll(".highlight").forEach(x=>x.classList.remove("highlight"));
+  const el = [...document.querySelectorAll(".sq")].find(x=>x.dataset.square===s);
+  if (el) el.classList.add("highlight");
+}
+function nextSquare() {
+  let s;
+  do { s = files[Math.floor(Math.random()*8)] + ranks[Math.floor(Math.random()*8)]; }
+  while (s === target && running);
+  target=s; highlight(s);
+  targetEl.textContent="Which square?";
+  statusEl.textContent="Listen / speak the highlighted square.";
+}
+function start() {
+  running=true; correct=0; attempts=0; updateStats();
+  buildBoard(); micBtn.classList.remove("hidden");
+  nextSquare();
+}
+function normalize(s) {
+  s = s.toLowerCase().trim()
+    .replace(/[.,!?]/g,"")
+    .replace(/\b(ate|eight)\b/g,"8")
+    .replace(/\b(one|won)\b/g,"1")
+    .replace(/\b(two|to|too)\b/g,"2")
+    .replace(/\b(three|tree)\b/g,"3")
+    .replace(/\b(four|for)\b/g,"4")
+    .replace(/\b(five)\b/g,"5")
+    .replace(/\b(six)\b/g,"6")
+    .replace(/\b(seven)\b/g,"7")
+    .replace(/\b(eight)\b/g,"8")
+    .replace(/\s+/g,"");
+  const m=s.match(/([a-h])([1-8])/);
+  return m ? m[1]+m[2] : s;
+}
+function checkAnswer(spoken) {
+  if (!running) return;
+  attempts++;
+  const answer=normalize(spoken);
+  if (answer === target) {
+    correct++;
+    statusEl.textContent="✓ Correct!";
+    targetEl.textContent=target.toUpperCase();
+    updateStats();
+    setTimeout(nextSquare, 450);
+  } else {
+    statusEl.textContent=`Not quite — you said "${spoken}". Try again.`;
+    updateStats();
+  }
+}
+function updateStats() {
+  correctEl.textContent=correct;
+  attemptsEl.textContent=attempts;
+  accuracyEl.textContent=attempts ? Math.round(correct/attempts*100)+"%" : "0%";
+}
+
+function setupRecognition() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    statusEl.textContent="Voice input isn't supported by this browser. Try Google Chrome on Android.";
+    return null;
+  }
+  const r = new SR();
+  r.lang="en-US"; r.continuous=false; r.interimResults=false; r.maxAlternatives=3;
+  r.onstart=()=>{ micBtn.classList.add("listening"); micBtn.textContent="🔴 Listening…"; statusEl.textContent="Say the coordinate, e.g. “E four”."; };
+  r.onend=()=>{ micBtn.classList.remove("listening"); micBtn.textContent="🎙️ Say the square"; };
+  r.onerror=(e)=>{
+    micBtn.classList.remove("listening"); micBtn.textContent="🎙️ Say the square";
+    statusEl.textContent = e.error==="not-allowed" ? "Microphone permission was denied. Allow microphone access in Chrome site settings." : "I didn't catch that. Try again.";
+  };
+  r.onresult=(e)=>{
+    const heard=[...e.results[0]].map(x=>x.transcript).join(" ");
+    checkAnswer(heard);
+  };
+  return r;
+}
+startBtn.addEventListener("click", start);
+side.addEventListener("change", ()=>{ if(!running) buildBoard(); });
+micBtn.addEventListener("click", ()=>{
+  if (!recognition) recognition=setupRecognition();
+  if (!recognition) return;
+  try { recognition.start(); } catch(e) {}
+});
+buildBoard();
+</script>
+</body>
+</html>
